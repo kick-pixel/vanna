@@ -4,6 +4,7 @@ Interactive example runner for Vanna Agents.
 
 import sys
 import importlib
+import traceback
 
 
 def main() -> None:
@@ -35,9 +36,11 @@ def main() -> None:
         else:
             print(f"Example '{example_name}' does not have a main function")
     except ImportError:
-        print(f"Example '{example_name}' not found")
+        print(f"Example '{example_name}' not found or failed to import dependencies.")
+        traceback.print_exc()
     except Exception as e:
         print(f"Error running example '{example_name}': {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

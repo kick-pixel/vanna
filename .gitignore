@@ -20,9 +20,14 @@ chroma.sqlite3
 milvus.db
 .milvus.db.lock
 
+venv
+.vscode
+data
+
 # Frontend builds and dependencies
 frontends/**/node_modules/
 frontends/**/static/
 frontends/**/.storybook-static/
 frontends/**/package-lock.json
 frontends/**/.mypy_cache/
+vanna指南.md
