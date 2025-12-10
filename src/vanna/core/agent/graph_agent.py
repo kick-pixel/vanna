@@ -158,42 +158,20 @@ class GraphAgent:
 
 
 
-    def _node_wrapper(self, node_name: str, func):
-        """Wrapper to add hooks around node execution."""
-        @functools.wraps(func)
-        async def wrapper(state: AgentState):
-            # Pre-execution hooks could go here
-            # For now we just log
-            logger.info(f"========================Entering node: {node_name} ========================")
-            
-            # Execute
-            result = await func(state)
-            # log result
-            logger.info(f"=======================   FINISHED NODE: {node_name} ========================")
-            
-            # Post-execution hooks
-            # We could modify result or state here
-            
-            return result
-        return wrapper
+
 
     def _build_graph(self) -> Any:
         """Build the LangGraph state machine."""
         workflow = StateGraph(AgentState)
 
-        # Helper to add nodes with hooks
-        def add_node(name: str, func):
-            workflow.add_node(name, self._node_wrapper(name, func))
-
-        add_node("initialize", self._node_initialize)
-        
-        # Merged prepare_context into initialize
-        add_node("get_schema", self._node_get_schema)
-        add_node("think", self._node_think)
-        add_node("generate_sql", self._node_generate_sql)
-        add_node("execute_sql", self._node_execute_sql)
-        add_node("execute_tools", self._node_execute_tools)
-        add_node("finalize", self._node_finalize)
+        # Add nodes directly (no wrapper needed - use stream_mode="updates" instead)
+        workflow.add_node("initialize", self._node_initialize)
+        workflow.add_node("get_schema", self._node_get_schema)
+        workflow.add_node("think", self._node_think)
+        workflow.add_node("generate_sql", self._node_generate_sql)
+        workflow.add_node("execute_sql", self._node_execute_sql)
+        workflow.add_node("execute_tools", self._node_execute_tools)
+        workflow.add_node("finalize", self._node_finalize)
 
         workflow.set_entry_point("initialize")
 
@@ -278,35 +256,41 @@ class GraphAgent:
             "sql_result": None,
         }
 
-        # Run the graph in a background task
-        graph_task = asyncio.create_task(self.graph.ainvoke(initial_state))
-
+        # Use stream with mode="updates" to get node execution updates
         try:
-            while True:
-                # Wait for either a UI component or the graph task to finish
-                # We use a small timeout for the queue get to check task status frequently
+            async for event in self.graph.astream(initial_state, stream_mode="updates"):
+                # event is a dict: {node_name: node_output}
+                for node_name, node_output in event.items():
+                    # node_output 是节点返回的状态更新(部分状态)
+                    if isinstance(node_output, dict):
+                        # 打印键名
+                        logger.info(f"Node '{node_name}' updated: {list(node_output.keys())}")
+                        # 打印每个键的值(限制长度避免日志过长)
+                        for key, value in node_output.items():
+                            value_str = str(value)
+                            if len(value_str) > 200:
+                                value_str = value_str[:200] + "... (truncated)"
+                            logger.info(f"  {key}: {value_str}")
+                    else:
+                        logger.info(f"Node '{node_name}' updated: completed")
+                    logger.info("====================")
+                # Process UI components from queue (non-blocking)
+                while not ui_queue.empty():
+                    try:
+                        item = ui_queue.get_nowait()
+                        if item is not None:
+                            yield item
+                    except asyncio.QueueEmpty:
+                        break
+            
+            # Process any remaining UI components after graph completes
+            while not ui_queue.empty():
                 try:
-                    # Check if task is done and raised exception
-                    if graph_task.done():
-                        exc = graph_task.exception()
-                        if exc:
-                            raise exc
-
-                        # Process remaining items in queue
-                        while not ui_queue.empty():
-                            yield await ui_queue.get()
-                        break
-
-                    # Wait for next item
-                    item = await asyncio.wait_for(ui_queue.get(), timeout=0.1)
-
-                    if item is None:  # Sentinel
-                        break
-
-                    yield item
-
-                except asyncio.TimeoutError:
-                    continue
+                    item = ui_queue.get_nowait()
+                    if item is not None:
+                        yield item
+                except asyncio.QueueEmpty:
+                    break
 
         except Exception as e:
             # Handle errors similarly to Agent class
@@ -320,9 +304,7 @@ class GraphAgent:
                 ),
                 simple_component=SimpleTextComponent(text=f"Error: {str(e)}")
             )
-        finally:
-            if not graph_task.done():
-                graph_task.cancel()
+
 
     # --- Node Implementations ---
 
