@@ -1,3 +1,8 @@
+from vanna.tools import (
+    RunSqlTool,
+    VisualizeDataTool,
+    LocalFileSystem,
+)
 import importlib
 import os
 import sys
@@ -13,11 +18,9 @@ from vanna.integrations.sqlite import SqliteRunner
 from vanna.integrations.local.agent_memory import DemoAgentMemory
 from vanna.core.user import RequestContext
 
-from vanna.tools import (
-    RunSqlTool,
-    VisualizeDataTool,
-    LocalFileSystem,
-)
+
+import logging
+logging.basicConfig(level=logging.INFO)
 
 
 def ensure_env() -> None:
@@ -114,8 +117,8 @@ async def main() -> None:
 
     # Sample queries to demonstrate different capabilities
     sample_questions = [
-        "What tables are in this database?",
-        # "Show me the first 5 customers with their names"
+        # "What tables are in this database?",
+        "Show me the first 5 customers with their names"
     ]
 
     print("\n" + "=" * 60)
