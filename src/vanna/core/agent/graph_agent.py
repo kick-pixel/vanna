@@ -494,7 +494,10 @@ class GraphAgent:
         if response and response.tool_calls:
             for tc in response.tool_calls:
                 if tc.name == "query_schema_metadata":
-                    schema_sql = tc.arguments.get("sql")
+                    # 从 LLM 提供的参数中获取 SQL,如果没有则保留 fallback
+                    provided_sql = tc.arguments.get("sql")
+                    if provided_sql:
+                        schema_sql = provided_sql
                     target_tool_id = tc.id
                 else:
                     other_tool_ids.append(tc.id)
