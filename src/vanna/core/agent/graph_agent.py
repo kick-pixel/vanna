@@ -1,8 +1,7 @@
 """
-GraphAgent implementation for the Vanna Agents framework using LangGraph.
+GraphAgent 使用 LangGraph 的实现，适用于 Vanna Agents 框架。
 
-This module provides the GraphAgent class that orchestrates the interaction
-between LLM services, tools, and conversation storage using a state graph.
+该模块提供了 GraphAgent 类，它通过状态图在 LLM 服务、工具和会话存储之间进行编排与协作。
 """
 
 import asyncio
@@ -49,9 +48,9 @@ logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict):
-    """State for the Agent execution graph."""
+    """Agent 执行状态图的状态定义。"""
 
-    # Context
+    # 上下文
     request_context: RequestContext
     user: User
     conversation_id: str
@@ -60,42 +59,42 @@ class AgentState(TypedDict):
     agent_memory: AgentMemory
     observability_provider: Optional[ObservabilityProvider]
 
-    # Inputs
+    # 输入
     message: str
 
-    # Workflow Data
-    ui_queue: asyncio.Queue  # Queue for streaming UI components
+    # 工作流数据
+    ui_queue: asyncio.Queue  # 用于流式发送 UI 组件的队列
     is_starter_request: bool
     should_stop: bool
 
-    # LLM Interaction
+    # LLM 交互
     tool_schemas: List[ToolSchema]
     system_prompt: Optional[str]
     messages: List[LlmMessage]
     llm_request: Optional[LlmRequest]
     llm_response: Optional[LlmResponse]
 
-    # Execution Control
+    # 执行控制
     tool_iterations: int
     tool_iterations: int
     tool_context: Optional[ToolContext]
-    
-    # Schema & SQL
+
+    # 模型与 SQL
     schema_metadata: Optional[str]
     generated_sql: Optional[str]
     sql_result: Optional[str]
 
 
-# Helper type for partial state updates
+# 局部状态更新的辅助类型
 PartialAgentState = Dict[str, Any]
 
 
 class GraphAgent:
     """
-    Agent implementation using LangGraph for macro-orchestration.
+    使用 LangGraph 进行宏观编排的 Agent 实现。
 
-    This class maintains API compatibility with the standard Agent class
-    while using a directed cyclic graph for the internal decision loop.
+    该类在保持与标准 Agent 类 API 兼容的同时，
+    使用有向循环图实现内部的决策与控制回路。
     """
 
     def __init__(
@@ -151,20 +150,16 @@ class GraphAgent:
             self.tool_registry.audit_logger = self.audit_logger
             self.tool_registry.audit_config = self.config.audit_config
 
-        # Initialize the graph
+        # 初始化状态图
         self.graph = self._build_graph()
         logger.info(f"Graph: {self.graph.get_graph().draw_mermaid()}")
         logger.info("Initialized GraphAgent")
 
-
-
-
-
     def _build_graph(self) -> Any:
-        """Build the LangGraph state machine."""
+        """构建 LangGraph 状态机。"""
         workflow = StateGraph(AgentState)
 
-        # Add nodes directly (no wrapper needed - use stream_mode="updates" instead)
+        # 直接添加节点
         workflow.add_node("initialize", self._node_initialize)
         workflow.add_node("get_schema", self._node_get_schema)
         workflow.add_node("think", self._node_think)
@@ -175,24 +170,24 @@ class GraphAgent:
 
         workflow.set_entry_point("initialize")
 
-        # Initialize now prepares context, so loop directly to think or specialized node if start request
-        # Actually initialize returns user & context, so next step is think
-        
+        # 初始化阶段会准备上下文，因此如果是起始请求可直接循环到思考或特定节点；
+        # 实际上初始化会返回用户与上下文，所以下一步为思考节点
+
         workflow.add_conditional_edges(
-             "initialize",
-             self._router_check_stop,
-             {
-                 "stop": "finalize",
-                 "continue": "think" 
-             }
+            "initialize",
+            self._router_check_stop,
+            {
+                "stop": "finalize",
+                "continue": "think"
+            }
         )
-        
-        # All action nodes return to think
+
+        # 所有动作节点最终回到思考节点
         workflow.add_edge("get_schema", "think")
         workflow.add_edge("generate_sql", "think")
         workflow.add_edge("execute_sql", "think")
 
-        # Conditional edge from think (Tool vs Done vs Virtual Tools)
+        # 从思考节点的条件边（工具执行 / 完成 / 虚拟工具）
         workflow.add_conditional_edges(
             "think",
             self._router_analyze_response,
@@ -204,8 +199,8 @@ class GraphAgent:
                 "execute_sql": "execute_sql"
             }
         )
-        
-        # From execute_tools to think
+
+        # 从工具执行节点回到思考节点
         workflow.add_conditional_edges(
             "execute_tools",
             self._router_check_limit,
@@ -227,11 +222,11 @@ class GraphAgent:
         conversation_id: Optional[str] = None,
     ) -> AsyncGenerator[UiComponent, None]:
         """
-        Process a user message using the graph and yield UI components.
+        使用图处理用户消息，并按需产生 UI 组件。
         """
         ui_queue = asyncio.Queue()
 
-        # Initial state
+        # 初始状态
         initial_state: AgentState = {
             "request_context": request_context,
             "user": None,  # Resolved in initialize
@@ -256,16 +251,16 @@ class GraphAgent:
             "sql_result": None,
         }
 
-        # Use stream with mode="updates" to get node execution updates
+        # 使用 stream_mode="updates" 获取节点执行的增量更新
         try:
             async for event in self.graph.astream(initial_state, stream_mode="updates"):
-                # event is a dict: {node_name: node_output}
+                # event 是一个字典：{node_name: node_output}
                 for node_name, node_output in event.items():
-                    # node_output 是节点返回的状态更新(部分状态)
+                    # node_output 是节点返回的状态更新（局部状态）
                     if isinstance(node_output, dict):
                         # 打印键名
                         logger.info(f"Node '{node_name}' updated: {list(node_output.keys())}")
-                        # 打印每个键的值(限制长度避免日志过长)
+                        # 打印每个键的值（限制长度避免日志过长）
                         for key, value in node_output.items():
                             value_str = str(value)
                             if len(value_str) > 200:
@@ -274,7 +269,7 @@ class GraphAgent:
                     else:
                         logger.info(f"Node '{node_name}' updated: completed")
                     logger.info("====================")
-                # Process UI components from queue (non-blocking)
+                # 从队列读取并输出 UI 组件（非阻塞）
                 while not ui_queue.empty():
                     try:
                         item = ui_queue.get_nowait()
@@ -282,8 +277,8 @@ class GraphAgent:
                             yield item
                     except asyncio.QueueEmpty:
                         break
-            
-            # Process any remaining UI components after graph completes
+
+            # 图执行完成后处理剩余的 UI 组件
             while not ui_queue.empty():
                 try:
                     item = ui_queue.get_nowait()
@@ -293,7 +288,7 @@ class GraphAgent:
                     break
 
         except Exception as e:
-            # Handle errors similarly to Agent class
+            # 错误处理方式与传统 Agent 类一致
             logger.error(f"Error in GraphAgent: {e}", exc_info=True)
             yield UiComponent(
                 rich_component=StatusCardComponent(
@@ -305,25 +300,24 @@ class GraphAgent:
                 simple_component=SimpleTextComponent(text=f"Error: {str(e)}")
             )
 
-
-    # --- Node Implementations ---
+    # --- 节点实现 ---
 
     async def _node_initialize(self, state: AgentState) -> PartialAgentState:
         """
-        Combined Initialization Node:
-        1. Resolve User & Conversation.
-        2. Handle Workflow/Starters.
-        3. Prepare Tool Context & System Prompt.
+        合并的初始化节点：
+        1. 解析用户与会话；
+        2. 处理工作流/起始界面；
+        3. 准备工具上下文与系统提示词。
         """
         request_context = state["request_context"]
         message = state["message"]
         conversation_id = state["conversation_id"]
         ui_queue = state["ui_queue"]
 
-        # 1. Resolve User
+        # 1. 解析用户
         user = await self.user_resolver.resolve_user(request_context)
 
-        # 2. Check starter request / Workflow
+        # 2. 检查是否为起始请求 / 工作流
         is_starter_request = (not message.strip()) or request_context.metadata.get(
             "starter_ui_request", False
         )
@@ -354,7 +348,7 @@ class GraphAgent:
         if not message.strip():
             return {"user": user, "should_stop": True}
 
-        # Lifecycle Hooks: before_message
+        # 生命周期钩子：消息前置处理
         for hook in self.lifecycle_hooks:
             result = await hook.before_message(user, message)
             if result is not None:
@@ -380,11 +374,11 @@ class GraphAgent:
 
         conversation.add_message(Message(role="user", content=message))
 
-        # 3. Prepare Context (formerly _node_prepare_context)
+        # 3. 准备上下文（原 _node_prepare_context）
         context_task = Task(title="Load context", status="pending")
         await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(context_task)))
 
-        # Build Tool Context
+        # 构建工具上下文
         ui_features_available = []
         for feature_name in self.config.ui_features.feature_group_access.keys():
             if self.config.ui_features.can_user_access_feature(feature_name, user):
@@ -402,7 +396,7 @@ class GraphAgent:
         for enricher in self.context_enrichers:
             tool_context = await enricher.enrich_context(tool_context)
 
-        # Get Tools
+        # 获取可用工具
         tool_schemas = await self.tool_registry.get_schemas(user)
 
         await ui_queue.put(UiComponent(
@@ -411,7 +405,7 @@ class GraphAgent:
             )
         ))
 
-        # Build System Prompt
+        # 构建系统提示词
         system_prompt = await self.system_prompt_builder.build_system_prompt(
             user, tool_schemas
         )
@@ -420,12 +414,12 @@ class GraphAgent:
                 system_prompt, message, user
             )
 
-        # Filter Messages
+        # 过滤会话消息
         filtered_messages = conversation.messages
         for filter in self.conversation_filters:
             filtered_messages = await filter.filter_messages(filtered_messages)
 
-        # Convert to LlmMessage
+        # 转换为 LlmMessage 列表
         messages = [
             LlmMessage(
                 role=msg.role,
@@ -451,48 +445,44 @@ class GraphAgent:
             "should_stop": False
         }
 
-
-
-
-
     async def _node_get_schema(self, state: AgentState) -> PartialAgentState:
         """
-        Active Schema Retrieval Node.
-        Executes SQL provided by the LLM (via query_schema_metadata) to inspect database structure.
-        Stores the result in memory and adds to context.
+        主动的架构检索节点。
+        执行 LLM 提供的 SQL（通过 query_schema_metadata）来检查数据库结构，
+        将结果保存并加入上下文。
         """
-        # if state.get("should_stop"): return {} # Not needed as we are routed here explicitly
+        # if state.get("should_stop"): return {} # 无需处理，路由已明确保障到达此处
 
         context = state.get("tool_context")
         ui_queue = state.get("ui_queue")
         response = state.get("llm_response")
-        
-        # 1. Parse SQL from tool call & Handle all tool calls
-        schema_sql = "SELECT name, sql FROM sqlite_master WHERE type='table'" # Fallback
-        
+
+        # 1. 从工具调用中解析 SQL，并处理所有工具调用
+        schema_sql = "SELECT name, sql FROM sqlite_master WHERE type='table'"  # 兜底值
+
         target_tool_id = None
         other_tool_ids = []
 
         if response and response.tool_calls:
             for tc in response.tool_calls:
                 if tc.name == "query_schema_metadata":
-                    # 从 LLM 提供的参数中获取 SQL,如果没有则保留 fallback
+                    # 从 LLM 提供的参数中获取 SQL，若无则使用兜底值
                     provided_sql = tc.arguments.get("sql")
                     if provided_sql:
                         schema_sql = provided_sql
                     target_tool_id = tc.id
                 else:
                     other_tool_ids.append(tc.id)
-        
+
         if not schema_sql:
-             # Must respond to the tool call
-             for tc in (response.tool_calls or []):
-                 state["messages"].append(LlmMessage(
-                     role="tool", 
-                     content="Error: No SQL argument provided for schema query.", 
-                     tool_call_id=tc.id
-                 ))
-             return {}
+            # 必须对工具调用进行响应
+            for tc in (response.tool_calls or []):
+                state["messages"].append(LlmMessage(
+                    role="tool",
+                    content="Error: No SQL argument provided for schema query.",
+                    tool_call_id=tc.id
+                ))
+            return {}
 
         await ui_queue.put(UiComponent(
             rich_component=StatusBarUpdateComponent(
@@ -500,66 +490,68 @@ class GraphAgent:
             )
         ))
 
-        # 2. Execute SQL (using run_sql tool logic)
+        # 2. 执行 SQL（复用 run_sql 工具逻辑）
         query_result_text = ""
         try:
-             sql_tool = await self.tool_registry.get_tool("run_sql")
-             if not sql_tool:
-                 raise Exception("Refusing to query schema: 'run_sql' tool not available.")
-             
-             # Execute
-             # We construct args manually.
-             args_model = sql_tool.get_args_schema()
-             tool_args = args_model(sql=schema_sql)
-             
-             result = await sql_tool.execute(context, tool_args)
-             
-             if result.success:
-                 query_result_text = result.result_for_llm
-             else:
-                 query_result_text = f"Schema Query Failed: {result.error}"
-                 
+            sql_tool = await self.tool_registry.get_tool("run_sql")
+            if not sql_tool:
+                raise Exception("Refusing to query schema: 'run_sql' tool not available.")
+
+            # 执行
+            # 手动构建参数
+            args_model = sql_tool.get_args_schema()
+            tool_args = args_model(sql=schema_sql)
+
+            result = await sql_tool.execute(context, tool_args)
+
+            if result.success:
+                query_result_text = result.result_for_llm
+            else:
+                query_result_text = f"Schema Query Failed: {result.error}"
+
         except Exception as e:
             logger.error(f"Schema Query Error: {e}")
             query_result_text = f"Schema Query Error: {e}"
 
-        # 3. Store in Memory
-        # We save this as a text memory so it persists across turns/sessions if needed
-        # Or just append to system prompt for this session.
-        # User requested: "get_schema获取并存储到mermory里"
+        # 3. 保存到记忆
+        # 作为文本记忆保存，在需要时跨轮次/会话持久化；
+        # 或在本次会话中追加到系统提示词。
+        # 用户需求："get_schema获取并存储到memory里"
         if self.agent_memory and "Error" not in query_result_text:
-             # Create a text memory item
-             # In a real app we might use save_text_memory tool logic or direct call
-             # For now, we assume direct access if possible, or just skip if no direct api
-             # We'll just add it to the 'schema_metadata' specific state which might be transient or saved
-             pass
+            # 创建一条文本记忆项
+            # 在实际应用中可使用 save_text_memory 工具逻辑或直接调用；
+            # 此处假设可直接访问，若无直接 API 则跳过；
+            # 暂时将其放入 'schema_metadata' 状态字段，后续可持久化。
+            pass
 
-        # 4. Update Context
-        
+        # 4. 更新上下文
+
         result_msg = f"Schema Query Result ({schema_sql}):\n{query_result_text}"
-        
-        # Add to messages so LLM sees it
+
+        # 加入到消息历史中，以便 LLM 感知
         if target_tool_id:
-             state["messages"].append(LlmMessage(role="tool", content=result_msg, tool_call_id=target_tool_id))
+            state["messages"].append(LlmMessage(
+                role="tool", content=result_msg, tool_call_id=target_tool_id))
         else:
-             # Fallback if we somehow lost the ID or it wasn't a tool call (unlikely with this flow)
-             state["messages"].append(LlmMessage(role="system", content=result_msg))
-             
-        # Handle other tool calls (dummy response to satisfy API)
+            # 兜底：若找不到 ID 或非工具调用（在当前流程中不太可能）
+            state["messages"].append(LlmMessage(role="system", content=result_msg))
+
+        # 处理其他工具调用（占位响应以满足 API）
         for ot_id in other_tool_ids:
-            state["messages"].append(LlmMessage(role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
-        
+            state["messages"].append(LlmMessage(
+                role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
+
         return {
-            "schema_metadata": query_result_text, # Allow subsequent nodes to see it specifically
+            "schema_metadata": query_result_text,  # Allow subsequent nodes to see it specifically
             "tool_iterations": state["tool_iterations"] + 1
         }
 
     async def _node_generate_sql(self, state: AgentState) -> PartialAgentState:
-        """Generate SQL based on request."""
+        """根据请求生成 SQL。"""
         ui_queue = state.get("ui_queue")
         response = state.get("llm_response")
-        
-        # Get instruction from tool call if available, else generic
+
+        # 若工具调用提供了指令则使用，否则采用通用指令
         instruction = "Generate SQL for the user's request."
         if response and response.tool_calls:
             for tc in response.tool_calls:
@@ -572,8 +564,8 @@ class GraphAgent:
                 status="working", message="Generating SQL", detail="Drafting query..."
             )
         ))
-        
-        # Find tool call ID
+
+        # 查找 generate_sql 的工具调用 ID
         target_tool_id = None
         other_tool_ids = []
         if response and response.tool_calls:
@@ -584,28 +576,31 @@ class GraphAgent:
                     other_tool_ids.append(tc.id)
 
         if target_tool_id:
-            # We MUST close the tool call loop before making a new request
-            state["messages"].append(LlmMessage(role="tool", content="Proceeding with SQL generation.", tool_call_id=target_tool_id))
+            # 在发起新的请求前，必须对工具调用进行闭合响应
+            state["messages"].append(LlmMessage(
+                role="tool", content="Proceeding with SQL generation.", tool_call_id=target_tool_id))
 
-        # Handle other tool calls
+        # 处理其他工具调用
         for ot_id in other_tool_ids:
-            state["messages"].append(LlmMessage(role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
-            
-        # We append the specific instruction to the prompt
-        # Note: We do NOT include the just-added tool result in the request if we want the LLM to just write SQL
-        # However, to be compliant with history, we should include it.
-        # But for the specialized "Generation" task, we might want to mask the history or just append the task prompt.
-        
+            state["messages"].append(LlmMessage(
+                role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
+
+        # 将特定指令附加到系统提示词中；
+        # 注意：若只希望 LLM 输出 SQL，可不包含刚添加的工具响应；
+        # 但为保证历史一致性，通常应包含；
+        # 对于专门的“生成”任务，也可适当屏蔽历史，仅附加任务提示。
+
         request = LlmRequest(
             messages=state["messages"],
-            tools=None, # Strict mode: provide NO tools so it must output text (code)
+            tools=None,  # Strict mode: provide NO tools so it must output text (code)
             user=state["user"],
             temperature=0.0,
             max_tokens=self.config.max_tokens,
             stream=self.config.stream_responses,
-            system_prompt=state["system_prompt"] + f"\n\nTASK: {instruction}\nOutput executable SQL only. No markdown.",
+            system_prompt=state["system_prompt"]
+            + f"\n\nTASK: {instruction}\nOutput executable SQL only. No markdown.",
         )
-        
+
         for mw in self.llm_middlewares:
             request = await mw.before_llm_request(request)
 
@@ -626,88 +621,94 @@ class GraphAgent:
         if generated_sql:
             generated_sql = generated_sql.replace("```sql", "").replace("```", "").strip()
 
-        state["messages"].append(LlmMessage(role="assistant", content=f"Generated SQL: {generated_sql}"))
-        
+        state["messages"].append(LlmMessage(
+            role="assistant", content=f"Generated SQL: {generated_sql}"))
+
         return {
             "generated_sql": generated_sql,
             "tool_iterations": state["tool_iterations"] + 1
         }
 
     async def _node_execute_sql(self, state: AgentState) -> PartialAgentState:
-        """Execute the generated SQL."""
+        """执行已生成的 SQL。"""
         ui_queue = state.get("ui_queue")
         generated_sql = state.get("generated_sql")
         context = state.get("tool_context")
         conversation = state.get("conversation")
-        
-        # Find tool call ID for execute_current_sql to respond to errors
+
+        # 查找 execute_current_sql 的工具调用 ID（用于错误响应）
         target_tool_id = None
         other_tool_ids = []
         response = state.get("llm_response")
         if response and response.tool_calls:
-             for tc in response.tool_calls:
-                 if tc.name == "execute_current_sql":
-                     target_tool_id = tc.id
-                 else:
-                     other_tool_ids.append(tc.id)
+            for tc in response.tool_calls:
+                if tc.name == "execute_current_sql":
+                    target_tool_id = tc.id
+                else:
+                    other_tool_ids.append(tc.id)
 
         if not generated_sql:
-             if target_tool_id:
-                  state["messages"].append(LlmMessage(role="tool", content="Error: No SQL has been generated yet.", tool_call_id=target_tool_id))
-             for ot_id in other_tool_ids:
-                  state["messages"].append(LlmMessage(role="tool", content="Ignored.", tool_call_id=ot_id))
-             return {}
-             
+            if target_tool_id:
+                state["messages"].append(LlmMessage(
+                    role="tool", content="Error: No SQL has been generated yet.", tool_call_id=target_tool_id))
+            for ot_id in other_tool_ids:
+                state["messages"].append(LlmMessage(
+                    role="tool", content="Ignored.", tool_call_id=ot_id))
+            return {}
+
         await ui_queue.put(UiComponent(
             rich_component=StatusBarUpdateComponent(
                 status="working", message="Executing SQL", detail="Running query..."
             )
         ))
 
-        # Find the real RunSqlTool
+        # 查找真实的 RunSqlTool
         sql_tool = await self.tool_registry.get_tool("run_sql")
         if not sql_tool:
-             if target_tool_id:
-                 state["messages"].append(LlmMessage(role="tool", content="Error: 'run_sql' tool is not configured.", tool_call_id=target_tool_id))
-             for ot_id in other_tool_ids:
-                 state["messages"].append(LlmMessage(role="tool", content="Ignored.", tool_call_id=ot_id))
-             return {}
-             
+            if target_tool_id:
+                state["messages"].append(LlmMessage(
+                    role="tool", content="Error: 'run_sql' tool is not configured.", tool_call_id=target_tool_id))
+            for ot_id in other_tool_ids:
+                state["messages"].append(LlmMessage(
+                    role="tool", content="Ignored.", tool_call_id=ot_id))
+            return {}
+
         try:
-             # Basic execution
-             # We rely on 'execute' method of the tool instance
-             # We need to construct the argument object expected by the tool
-             args_model = sql_tool.get_args_schema()
-             tool_args = args_model(sql=generated_sql)
-             
-             # Call tool directly to avoid schema validation overhead/mismatch
-             result = await sql_tool.execute(context, tool_args)
-             
+            # 基础执行
+            # 依赖工具实例的 execute 方法
+            # 需要构造工具所需的参数对象
+            args_model = sql_tool.get_args_schema()
+            tool_args = args_model(sql=generated_sql)
+
+            # 直接调用工具以避免模式校验的额外开销/不匹配
+            result = await sql_tool.execute(context, tool_args)
+
         except Exception as e:
             logger.error(f"SQL Execution failed: {e}")
             state["messages"].append(LlmMessage(role="system", content=f"SQL Execution Error: {e}"))
             return {}
 
-        # Add result to conversation
-        # We already found IDs above
-        
+        # 将结果写入会话
+        # 上文已获得相关 ID
+
         conversation.add_message(Message(
             role="tool",
             content=result.result_for_llm if result.success else f"Error: {result.error}",
             tool_call_id=target_tool_id or "unknown"
         ))
-        
-        # Add to context messages
+
+        # 将结果加入上下文消息
         state["messages"].append(LlmMessage(
-            role="tool", 
+            role="tool",
             content=result.result_for_llm if result.success else f"Error: {result.error}",
             tool_call_id=target_tool_id or "unknown"
         ))
-        
-        # Handle other tool calls
+
+        # 处理其他工具调用
         for ot_id in other_tool_ids:
-            state["messages"].append(LlmMessage(role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
-        
+            state["messages"].append(LlmMessage(
+                role="tool", content="Tool call ignored in this step.", tool_call_id=ot_id))
+
         if result.ui_component:
             await ui_queue.put(result.ui_component)
 
@@ -716,44 +717,43 @@ class GraphAgent:
             "tool_iterations": state["tool_iterations"] + 1
         }
 
-
     async def _node_think(self, state: AgentState) -> PartialAgentState:
-        """Execute LLM request with virtual tools."""
-        
-        # 1. Define Virtual Tools (Updated)
+        """使用虚拟工具执行一次 LLM 请求。"""
+
+        # 1. 定义虚拟工具（更新版）
         virtual_tools = [
             ToolSchema(
                 name="query_schema_metadata",
                 description="CRITICAL: Use this tool FIRST to retreive the database schema (tables/columns) before generating any SQL. Execute invalid SQLs like `SELECT ... FROM sqlite_master` to find tables.",
-                 parameters={
-                   "type": "object", 
-                   "properties": {
-                       "sql": {"type": "string", "description": "The SQL query to inspect schema (e.g. 'SELECT name, sql FROM sqlite_master WHERE type=\"table\"')"}
-                   }, 
-                   "required": ["sql"]
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "sql": {"type": "string", "description": "The SQL query to inspect schema (e.g. 'SELECT name, sql FROM sqlite_master WHERE type=\"table\"')"}
+                    },
+                    "required": ["sql"]
                 }
             ),
             ToolSchema(
                 name="generate_sql",
                 description="Generate a business logic SQL query based on the schema and user question.",
                 parameters={
-                   "type": "object", "properties": {"instruction": {"type": "string"}}, "required": ["instruction"]
+                    "type": "object", "properties": {"instruction": {"type": "string"}}, "required": ["instruction"]
                 }
             ),
             ToolSchema(
                 name="execute_current_sql",
                 description="Execute the currently generated SQL query.",
                 parameters={
-                   "type": "object", "properties": {}, "required": []
+                    "type": "object", "properties": {}, "required": []
                 }
             )
         ]
-        
-        # 2. Filter Real Tools
+
+        # 2. 过滤真实工具
         real_tools = state.get("tool_schemas", [])
         filtered_tools = [t for t in real_tools if t.name != "run_sql"]
-        
-        # 3. Combine
+
+        # 3. 合并工具清单
         available_tools = filtered_tools + virtual_tools
 
         request = LlmRequest(
@@ -787,41 +787,40 @@ class GraphAgent:
 
         for mw in self.llm_middlewares:
             response = await mw.after_llm_response(request, response)
-            
-        # ALWAYS append the assistant message to state, even if just tool calls
+
+        # 始终将助手消息追加到状态中，即使只有工具调用
         assistant_msg = LlmMessage(
-            role="assistant", 
-            content=response.content or "", # Ensure string even if None
+            role="assistant",
+            content=response.content or "",  # 即使为 None 也保证为字符串
             tool_calls=response.tool_calls
         )
         state["messages"].append(assistant_msg)
-        
-        # Add to conversation object too
+
+        # 同步写入会话对象
         state["conversation"].add_message(Message(
             role="assistant",
             content=response.content or "",
             tool_calls=response.tool_calls
         ))
-             
+
         if response.content:
-             ui_queue = state["ui_queue"]
-             await ui_queue.put(UiComponent(
+            ui_queue = state["ui_queue"]
+            await ui_queue.put(UiComponent(
                 rich_component=RichTextComponent(content=response.content, markdown=True),
                 simple_component=SimpleTextComponent(text=response.content)
             ))
 
         return {"llm_response": response}
 
-
     async def _node_execute_tools(self, state: AgentState) -> PartialAgentState:
-        """Execute tools from LLM response."""
+        """执行 LLM 响应中请求的工具。"""
         response = state["llm_response"]
         conversation = state["conversation"]
         ui_queue = state["ui_queue"]
         user = state["user"]
         context = state["tool_context"]
 
-        # Add Assistant Message
+        # 添加助手消息到会话
         assistant_msg = Message(
             role="assistant",
             content=response.content or "",
@@ -829,7 +828,7 @@ class GraphAgent:
         )
         conversation.add_message(assistant_msg)
 
-        # Yield content
+        # 输出文本内容
         if response.content:
             await ui_queue.put(UiComponent(
                 rich_component=RichTextComponent(content=response.content, markdown=True),
@@ -846,7 +845,7 @@ class GraphAgent:
 
         tool_results_data = []
         for tool_call in (response.tool_calls or []):
-            # Task UI
+            # 任务 UI
             tool_task = Task(
                 title=f"Execute {tool_call.name}",
                 description="Running tool...",
@@ -856,7 +855,7 @@ class GraphAgent:
                 rich_component=TaskTrackerUpdateComponent.add_task(tool_task)
             ))
 
-            # Status Card UI
+            # 状态卡片 UI
             card = StatusCardComponent(
                 title=f"Executing {tool_call.name}",
                 status="running",
@@ -865,22 +864,22 @@ class GraphAgent:
             )
             await ui_queue.put(UiComponent(rich_component=card))
 
-            # Hooks: before_tool
+            # 钩子：工具执行前
             tool = await self.tool_registry.get_tool(tool_call.name)
             if tool:
                 for hook in self.lifecycle_hooks:
                     await hook.before_tool(tool, context)
 
-            # Execution
+            # 执行
             result = await self.tool_registry.execute(tool_call, context)
 
-            # Hooks: after_tool
+            # 钩子：工具执行后
             for hook in self.lifecycle_hooks:
                 modified = await hook.after_tool(result)
                 if modified:
                     result = modified
 
-            # Update UI with result
+            # 使用结果更新 UI
             status = "success" if result.success else "error"
             await ui_queue.put(UiComponent(
                 rich_component=card.set_status(status, result.result_for_llm)
@@ -899,7 +898,7 @@ class GraphAgent:
                 "content": result.result_for_llm if result.success else (result.error or "Failed")
             })
 
-        # Add Tool Messages
+        # 将工具消息写入会话
         for res in tool_results_data:
             conversation.add_message(Message(
                 role="tool",
@@ -907,13 +906,12 @@ class GraphAgent:
                 tool_call_id=res["tool_call_id"]
             ))
 
-        # Rebuild messages for next LLM turn
-        # In a real implementation, we would just append to state["messages"]
-        # but here we rely on conversation.messages being the source of truth
-        # so we might need to re-convert them or append them.
-        # For simplicity, we assume prepare_context logic or incremental append logic.
+        # 为下一轮 LLM 请求重建消息列表
+        # 实际实现中可直接追加到 state["messages"]；
+        # 但此处以 conversation.messages 为准，可能需要重新转换或追加。
+        # 为简化处理，假设沿用准备上下文或增量追加逻辑。
 
-        # Incremental append to LlmMessages
+        # 增量追加到 LlmMessages
         new_messages = state["messages"][:]
         new_messages.append(LlmMessage(
             role="assistant",
@@ -933,18 +931,18 @@ class GraphAgent:
         }
 
     async def _node_finalize(self, state: AgentState) -> PartialAgentState:
-        """Save conversation, hooks, clean up."""
+        """保存会话、触发钩子并收尾。"""
         if state.get("should_stop"):
             return {}
 
         conversation = state["conversation"]
         ui_queue = state["ui_queue"]
 
-        # If we came here from "done" state of LLM (no tools)
+        # 若来源于 LLM 的 "done" 状态（无工具调用）
         response = state.get("llm_response")
         if response and not response.is_tool_call():
-            # Add final assistant message if not already added
-            # (In execute_tools we add it, but if we skipped tools, we need to add it here)
+            # 若尚未添加最终助手消息，则在此补充；
+            # （在 execute_tools 中已添加；若跳过工具调用则需在此添加）
             conversation.add_message(Message(role="assistant", content=response.content))
 
             if response.content:
@@ -972,16 +970,16 @@ class GraphAgent:
 
         return {"is_complete": True}
 
-    # --- Routers ---
+    # --- 路由 ---
 
     def _router_check_stop(self, state: AgentState) -> Literal["stop", "continue"]:
         return "stop" if state.get("should_stop") else "continue"
 
     def _router_analyze_response(self, state: AgentState) -> Literal["tools", "done", "get_schema", "generate_sql", "execute_sql"]:
         response = state["llm_response"]
-        
+
         if response and response.is_tool_call():
-            # Check virtual tools
+            # 检查虚拟工具
             for tool_call in response.tool_calls:
                 if tool_call.name == "query_schema_metadata":
                     return "get_schema"
@@ -996,5 +994,5 @@ class GraphAgent:
         if state["tool_iterations"] < self.config.max_tool_iterations:
             return "continue"
 
-        # Limit reached logic could be added here (logging, warning UI)
+        # 达到工具迭代上限的逻辑可在此添加（日志、警告 UI）
         return "stop"
