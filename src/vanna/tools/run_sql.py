@@ -47,7 +47,7 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
         return (
             self._custom_description
             if self._custom_description
-            else "Execute SQL queries against the configured database"
+            else f"Execute {self.sql_runner.dialect} queries against the configured database"
         )
 
     def get_args_schema(self) -> Type[RunSqlToolArgs]:
@@ -125,20 +125,59 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
                         "output_file": filename,
                     }
             else:
-                # For non-SELECT queries (INSERT, UPDATE, DELETE, etc.)
-                # The SqlRunner should return a DataFrame with affected row count
-                rows_affected = len(df) if not df.empty else 0
-                result = (
-                    f"Query executed successfully. {rows_affected} row(s) affected."
-                )
-
-                metadata = {"rows_affected": rows_affected, "query_type": query_type}
-                ui_component = UiComponent(
-                    rich_component=NotificationComponent(
-                        type=ComponentType.NOTIFICATION, level="success", message=result
-                    ),
-                    simple_component=SimpleTextComponent(text=result),
-                )
+                # For non-SELECT queries (INSERT, UPDATE, DELETE, PRAGMA, etc.)
+                # Check if DataFrame has data (e.g., PRAGMA queries return data)
+                if not df.empty:
+                    # PRAGMA and other queries that return data
+                    results_data = df.to_dict("records")
+                    columns = df.columns.tolist()
+                    row_count = len(df)
+                    
+                    # Write DataFrame to CSV file
+                    file_id = str(uuid.uuid4())[:8]
+                    filename = f"query_results_{file_id}.csv"
+                    csv_content = df.to_csv(index=False)
+                    await self.file_system.write_file(
+                        filename, csv_content, context, overwrite=True
+                    )
+                    
+                    # Create result text for LLM
+                    results_preview = csv_content
+                    if len(results_preview) > 1000:
+                        results_preview = results_preview[:1000] + "\\n(Results truncated)"
+                    
+                    result = f"{results_preview}\\n\\nResults saved to file: {filename}\\n\\n**IMPORTANT: FOR VISUALIZE_DATA USE FILENAME: {filename}**"
+                    
+                    metadata = {
+                        "row_count": row_count,
+                        "columns": columns,
+                        "query_type": query_type,
+                        "results": results_data,
+                        "output_file": filename,
+                    }
+                    
+                    dataframe_component = DataFrameComponent.from_records(
+                        records=cast(List[Dict[str, Any]], results_data),
+                        title="Query Results",
+                        description=f"Query returned {row_count} rows with {len(columns)} columns",
+                    )
+                    
+                    ui_component = UiComponent(
+                        rich_component=dataframe_component,
+                        simple_component=SimpleTextComponent(text=result),
+                    )
+                else:
+                    # Truly non-data queries (INSERT, UPDATE, DELETE)
+                    rows_affected = 0
+                    result = f"Query executed successfully. {rows_affected} row(s) affected."
+                    
+                    metadata = {"rows_affected": rows_affected, "query_type": query_type}
+                    ui_component = UiComponent(
+                        rich_component=NotificationComponent(
+                            type=ComponentType.NOTIFICATION, level="success", message=result
+                        ),
+                        simple_component=SimpleTextComponent(text=result),
+                    )
 
             return ToolResult(
                 success=True,

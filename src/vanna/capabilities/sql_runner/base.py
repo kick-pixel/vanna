@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 class SqlRunner(ABC):
     """Interface for SQL execution with different implementations."""
 
+    @property
+    def dialect(self) -> str:
+        """Return the SQL dialect of the database."""
+        return "SQL"
+
     @abstractmethod
     async def run_sql(
         self, args: RunSqlToolArgs, context: "ToolContext"

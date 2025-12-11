@@ -18,6 +18,10 @@ class SqliteRunner(SqlRunner):
         """
         self.database_path = database_path
 
+    @property
+    def dialect(self) -> str:
+        return "SQLite"
+
     async def run_sql(self, args: RunSqlToolArgs, context: ToolContext) -> pd.DataFrame:
         """Execute SQL query against SQLite database and return results as DataFrame.
 
@@ -40,24 +44,20 @@ class SqliteRunner(SqlRunner):
             # Execute the query
             cursor.execute(args.sql)
 
-            # Determine if this is a SELECT query or modification query
-            query_type = args.sql.strip().upper().split()[0]
-
-            if query_type == "SELECT":
-                # Fetch results for SELECT queries
+            # If cursor.description is not None, it's a query that returns rows (SELECT, PRAGMA, etc.)
+            if cursor.description is not None:
+                # Fetch results
                 rows = cursor.fetchall()
                 if not rows:
-                    # Return empty DataFrame
                     return pd.DataFrame()
-
+                
                 # Convert rows to list of dictionaries
                 results_data = [dict(row) for row in rows]
                 return pd.DataFrame(results_data)
             else:
-                # For non-SELECT queries (INSERT, UPDATE, DELETE, etc.)
+                # For non-returning queries (INSERT, UPDATE, DELETE, etc.)
                 conn.commit()
                 rows_affected = cursor.rowcount
-                # Return a DataFrame indicating rows affected
                 return pd.DataFrame({"rows_affected": [rows_affected]})
 
         finally:

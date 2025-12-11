@@ -20,6 +20,7 @@ from vanna.components import (
     SimpleTextComponent,
     StatusBarUpdateComponent,
     StatusCardComponent,
+    CardComponent,  # Add CardComponent
     Task,
     TaskTrackerUpdateComponent,
     UiComponent,
@@ -161,10 +162,12 @@ class GraphAgent:
 
         # 直接添加节点
         workflow.add_node("initialize", self._node_initialize)
+        workflow.add_node("memory_search", self._node_memory_search)  # 新增记忆搜索节点
         workflow.add_node("get_schema", self._node_get_schema)
         workflow.add_node("think", self._node_think)
         workflow.add_node("generate_sql", self._node_generate_sql)
         workflow.add_node("execute_sql", self._node_execute_sql)
+        workflow.add_node("save_memory", self._node_save_memory)  # 新增记忆保存节点
         workflow.add_node("execute_tools", self._node_execute_tools)
         workflow.add_node("finalize", self._node_finalize)
 
@@ -178,14 +181,20 @@ class GraphAgent:
             self._router_check_stop,
             {
                 "stop": "finalize",
-                "continue": "think"
+                "continue": "memory_search"  # 初始化后先搜索记忆
             }
         )
+        
+        # 记忆搜索后进入思考节点
+        workflow.add_edge("memory_search", "think")
 
         # 所有动作节点最终回到思考节点
         workflow.add_edge("get_schema", "think")
         workflow.add_edge("generate_sql", "think")
-        workflow.add_edge("execute_sql", "think")
+        
+        # 执行SQL成功后尝试保存记忆，然后回思考
+        workflow.add_edge("execute_sql", "save_memory")
+        workflow.add_edge("save_memory", "think")
 
         # 从思考节点的条件边（工具执行 / 完成 / 虚拟工具）
         workflow.add_conditional_edges(
@@ -213,6 +222,48 @@ class GraphAgent:
         workflow.add_edge("finalize", END)
 
         return workflow.compile()
+
+    def _sanitize_messages_for_llm(self, messages: List[LlmMessage]) -> List[LlmMessage]:
+        """Ensure assistant messages with tool_calls are followed by tool responses.
+
+        Some providers (OpenAI-compatible) require that any assistant message
+        containing tool_calls MUST be immediately followed by tool messages
+        responding to each tool_call_id. If history contains an assistant
+        tool_calls message without corresponding tool responses (e.g., from
+        an interrupted prior run), we drop the tool_calls to avoid protocol
+        errors while preserving any textual content.
+        """
+        sanitized: List[LlmMessage] = []
+        pending_tool_ids: List[str] = []
+
+        for i, msg in enumerate(messages):
+            if msg.role == "assistant" and msg.tool_calls:
+                # Collect tool_call_ids
+                pending_tool_ids = [tc.id for tc in (msg.tool_calls or [])]
+
+                # Look ahead for tool responses
+                has_responses = True
+                ids_remaining = set(pending_tool_ids)
+                for j in range(i + 1, len(messages)):
+                    nxt = messages[j]
+                    if nxt.role != "tool":
+                        # Encountered a non-tool message before all responses
+                        break
+                    if nxt.tool_call_id:
+                        ids_remaining.discard(nxt.tool_call_id)
+                    if not ids_remaining:
+                        has_responses = True
+                        break
+
+                # If responses missing, strip tool_calls to satisfy protocol
+                if ids_remaining:
+                    sanitized.append(LlmMessage(role="assistant", content=msg.content or ""))
+                else:
+                    sanitized.append(msg)
+            else:
+                sanitized.append(msg)
+
+        return sanitized
 
     async def send_message(
         self,
@@ -253,39 +304,58 @@ class GraphAgent:
 
         # 使用 stream_mode="updates" 获取节点执行的增量更新
         try:
-            async for event in self.graph.astream(initial_state, stream_mode="updates"):
-                # event 是一个字典：{node_name: node_output}
-                for node_name, node_output in event.items():
-                    # node_output 是节点返回的状态更新（局部状态）
-                    if isinstance(node_output, dict):
-                        # 打印键名
-                        logger.info(f"Node '{node_name}' updated: {list(node_output.keys())}")
-                        # 打印每个键的值（限制长度避免日志过长）
-                        for key, value in node_output.items():
-                            value_str = str(value)
-                            if len(value_str) > 200:
-                                value_str = value_str[:200] + "... (truncated)"
-                            logger.info(f"  {key}: {value_str}")
-                    else:
-                        logger.info(f"Node '{node_name}' updated: completed")
-                    logger.info("====================")
-                # 从队列读取并输出 UI 组件（非阻塞）
-                while not ui_queue.empty():
-                    try:
-                        item = ui_queue.get_nowait()
-                        if item is not None:
-                            yield item
-                    except asyncio.QueueEmpty:
-                        break
-
-            # 图执行完成后处理剩余的 UI 组件
-            while not ui_queue.empty():
+            # Create a task to run the graph
+            async def run_graph():
                 try:
-                    item = ui_queue.get_nowait()
-                    if item is not None:
-                        yield item
-                except asyncio.QueueEmpty:
+                    async for event in self.graph.astream(initial_state, stream_mode="updates"):
+                        # event 是一个字典：{node_name: node_output}
+                        for node_name, node_output in event.items():
+                            # node_output 是节点返回的状态更新（局部状态）
+                            if isinstance(node_output, dict):
+                                # 打印键名
+                                logger.info(f"Node '{node_name}' updated: {list(node_output.keys())}")
+                                # 打印每个键的值（限制长度避免日志过长）
+                                for key, value in node_output.items():
+                                    value_str = str(value)
+                                    logger.info(f"  {key}: {value_str}")
+                            else:
+                                logger.info(f"Node '{node_name}' updated: completed")
+                            logger.info("====================")
+                except Exception as e:
+                    logger.error(f"Error in graph execution: {e}", exc_info=True)
+                    await ui_queue.put(e)
+                finally:
+                    # Signal completion
+                    await ui_queue.put(None)
+
+            # Start the graph task
+            graph_task = asyncio.create_task(run_graph())
+
+            # Consume the UI queue while the graph runs
+            while True:
+                item = await ui_queue.get()
+                
+                if item is None:
+                    # Completion signal
                     break
+                
+                if isinstance(item, Exception):
+                    # Error occurred in graph
+                    yield UiComponent(
+                        rich_component=StatusCardComponent(
+                            title="Error Processing Message",
+                            status="error",
+                            description="An unexpected error occurred.",
+                            icon="⚠️",
+                        ),
+                        simple_component=SimpleTextComponent(text=f"Error: {str(item)}")
+                    )
+                    break
+
+                yield item
+
+            # Ensure graph task is done
+            await graph_task
 
         except Exception as e:
             # 错误处理方式与传统 Agent 类一致
@@ -433,6 +503,9 @@ class GraphAgent:
         if self.llm_context_enhancer:
             messages = await self.llm_context_enhancer.enhance_user_messages(messages, user)
 
+        # Sanitize history to avoid unresolved tool_calls protocol errors
+        messages = self._sanitize_messages_for_llm(messages)
+
         return {
             "user": user,
             "conversation": conversation,
@@ -444,6 +517,66 @@ class GraphAgent:
             "messages": messages,
             "should_stop": False
         }
+
+    async def _node_memory_search(self, state: AgentState) -> PartialAgentState:
+        """
+        记忆搜索节点：
+        使用 search_saved_correct_tool_uses 工具检索相似的历史操作。
+        """
+        ui_queue = state["ui_queue"]
+        context = state["tool_context"]
+        message = state["message"]
+        
+        # 检查是否启用了记忆功能
+        if not self.agent_memory:
+            return {}
+
+        # 检查是否配置了记忆搜索工具
+        search_tool = await self.tool_registry.get_tool("search_saved_correct_tool_uses")
+        if not search_tool:
+            return {}
+
+        await ui_queue.put(UiComponent(
+            rich_component=StatusBarUpdateComponent(
+                status="working", message="Searching Memory", detail="Checking past experiences..."
+            )
+        ))
+        
+        # 添加任务
+        task = Task(title="Search Memory", description="Searching for similar past queries", status="in_progress")
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(task)))
+
+        try:
+            # 执行搜索
+            args_model = search_tool.get_args_schema()
+            # 搜索相似问题，只关注 run_sql 类型的工具调用
+            tool_args = args_model(question=message, tool_name_filter="run_sql")
+            
+            result = await search_tool.execute(context, tool_args)
+            
+            # 如果找到了结果，将其添加到上下文消息中
+            if result.success and "Found" in result.result_for_llm and "0 similar" not in result.result_for_llm:
+                memory_msg = f"Memory Search Results:\n{result.result_for_llm}"
+                state["messages"].append(LlmMessage(role="system", content=memory_msg))
+                
+                await ui_queue.put(UiComponent(
+                    rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed", detail="Found relevant memories")
+                ))
+            else:
+                await ui_queue.put(UiComponent(
+                    rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed", detail="No relevant memories found")
+                ))
+                
+            if result.ui_component:
+                await ui_queue.put(result.ui_component)
+                
+        except Exception as e:
+            logger.error(f"Memory search failed: {e}")
+            await ui_queue.put(UiComponent(
+                rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="failed", detail=str(e))
+            ))
+
+        return {}
 
     async def _node_get_schema(self, state: AgentState) -> PartialAgentState:
         """
@@ -490,8 +623,13 @@ class GraphAgent:
             )
         ))
 
+        # 添加任务和状态卡片
+        task = Task(title="Query Schema", description="Inspecting database structure", status="in_progress")
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(task)))
+
         # 2. 执行 SQL（复用 run_sql 工具逻辑）
         query_result_text = ""
+        success = False
         try:
             sql_tool = await self.tool_registry.get_tool("run_sql")
             if not sql_tool:
@@ -503,15 +641,34 @@ class GraphAgent:
             tool_args = args_model(sql=schema_sql)
 
             result = await sql_tool.execute(context, tool_args)
+            success = result.success
 
             if result.success:
-                query_result_text = result.result_for_llm
+                # Check if we have actual data in metadata (for PRAGMA and other queries)
+                # PRAGMA queries don't start with SELECT, so they return summary text in result_for_llm
+                # but the actual data is available in metadata["results"]
+                if result.metadata and "results" in result.metadata:
+                    results = result.metadata["results"]
+                    if results:
+                        # Format the results as a readable structure for LLM
+                        import json
+                        query_result_text = result.result_for_llm + "\n\nData:\n" + json.dumps(results, indent=2, ensure_ascii=False)
+                    else:
+                        query_result_text = result.result_for_llm
+                else:
+                    query_result_text = result.result_for_llm
             else:
                 query_result_text = f"Schema Query Failed: {result.error}"
 
         except Exception as e:
             logger.error(f"Schema Query Error: {e}")
             query_result_text = f"Schema Query Error: {e}"
+            success = False
+
+        # 更新任务和状态卡片
+        # status = "success" if success else "error"
+        # await ui_queue.put(UiComponent(rich_component=card.set_status(status, "Schema retrieved" if success else "Failed to retrieve schema")))
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed")))
 
         # 3. 保存到记忆
         # 作为文本记忆保存，在需要时跨轮次/会话持久化；
@@ -565,6 +722,10 @@ class GraphAgent:
             )
         ))
 
+        # 添加任务和状态卡片
+        task = Task(title="Generate SQL", description="Drafting SQL query", status="in_progress")
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(task)))
+
         # 查找 generate_sql 的工具调用 ID
         target_tool_id = None
         other_tool_ids = []
@@ -590,8 +751,10 @@ class GraphAgent:
         # 但为保证历史一致性，通常应包含；
         # 对于专门的“生成”任务，也可适当屏蔽历史，仅附加任务提示。
 
+        gen_messages = self._sanitize_messages_for_llm(state["messages"])
+
         request = LlmRequest(
-            messages=state["messages"],
+            messages=gen_messages,
             tools=None,  # Strict mode: provide NO tools so it must output text (code)
             user=state["user"],
             temperature=0.0,
@@ -600,6 +763,8 @@ class GraphAgent:
             system_prompt=state["system_prompt"]
             + f"\n\nTASK: {instruction}\nOutput executable SQL only. No markdown.",
         )
+
+        print("Generated LlmRequest for generate_sql Generation:", gen_messages)
 
         for mw in self.llm_middlewares:
             request = await mw.before_llm_request(request)
@@ -620,9 +785,30 @@ class GraphAgent:
         generated_sql = response.content
         if generated_sql:
             generated_sql = generated_sql.replace("```sql", "").replace("```", "").strip()
+            if generated_sql.lower().startswith("generated sql:"):
+                generated_sql = generated_sql[len("generated sql:"):].strip()
 
         state["messages"].append(LlmMessage(
             role="assistant", content=f"Generated SQL: {generated_sql}"))
+
+        # 更新任务和状态卡片
+        # await ui_queue.put(UiComponent(rich_component=card.set_status("success", "SQL Generated")))
+        # User prefers specific SQL as a Card, not just a status update
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed")))
+
+        if generated_sql:
+            # Use CardComponent for the SQL as requested
+            sql_card = CardComponent(
+                title="Generated SQL",
+                content=generated_sql,
+                icon="📝",
+                status="success",
+                markdown=False  # No markdown packaging
+            )
+            await ui_queue.put(UiComponent(
+                rich_component=sql_card,
+                simple_component=SimpleTextComponent(text=generated_sql)
+            ))
 
         return {
             "generated_sql": generated_sql,
@@ -662,6 +848,10 @@ class GraphAgent:
             )
         ))
 
+        # 添加任务和状态卡片
+        task = Task(title="Execute SQL", description="Running SQL query", status="in_progress")
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(task)))
+
         # 查找真实的 RunSqlTool
         sql_tool = await self.tool_registry.get_tool("run_sql")
         if not sql_tool:
@@ -671,6 +861,10 @@ class GraphAgent:
             for ot_id in other_tool_ids:
                 state["messages"].append(LlmMessage(
                     role="tool", content="Ignored.", tool_call_id=ot_id))
+            
+            # Update UI on failure
+            # await ui_queue.put(UiComponent(rich_component=card.set_status("error", "Tool not configured")))
+            await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="failed")))
             return {}
 
         try:
@@ -683,9 +877,26 @@ class GraphAgent:
             # 直接调用工具以避免模式校验的额外开销/不匹配
             result = await sql_tool.execute(context, tool_args)
 
+            # 更新任务和状态卡片
+            status = "success" if result.success else "error"
+            description = "Query executed successfully" if result.success else f"Error: {result.error}"
+            
+            # 如果是错误，可能需要更详细的描述
+            if not result.success:
+                 # Check if the result has a UI component that is a Notification
+                if result.ui_component and result.ui_component.rich_component and hasattr(result.ui_component.rich_component, "message"):
+                    description = result.ui_component.rich_component.message
+
+            # await ui_queue.put(UiComponent(rich_component=card.set_status(status, description)))
+            await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed" if result.success else "failed")))
+
         except Exception as e:
             logger.error(f"SQL Execution failed: {e}")
             state["messages"].append(LlmMessage(role="system", content=f"SQL Execution Error: {e}"))
+            
+            # Update UI on exception
+            # await ui_queue.put(UiComponent(rich_component=card.set_status("error", f"Exception: {str(e)}")))
+            await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="failed")))
             return {}
 
         # 将结果写入会话
@@ -716,6 +927,66 @@ class GraphAgent:
             "sql_result": result.result_for_llm,
             "tool_iterations": state["tool_iterations"] + 1
         }
+
+    async def _node_save_memory(self, state: AgentState) -> PartialAgentState:
+        """
+        记忆保存节点：
+        如果 SQL 执行成功，尝试将这次成功的 (Question, SQL) 对保存到 AgentMemory。
+        """
+        ui_queue = state["ui_queue"]
+        context = state["tool_context"]
+        message = state["message"]
+        generated_sql = state.get("generated_sql")
+        sql_result = state.get("sql_result")
+
+        # 检查前置条件：必须有生成的SQL，且执行成功（结果不含Error）
+        if not generated_sql or not sql_result or "Error" in sql_result:
+            return {}
+
+        # 检查是否启用了记忆功能
+        if not self.agent_memory:
+            return {}
+
+        # 检查是否配置了保存工具
+        save_tool = await self.tool_registry.get_tool("save_question_tool_args")
+        if not save_tool:
+            return {}
+            
+        await ui_queue.put(UiComponent(
+            rich_component=StatusBarUpdateComponent(
+                status="working", message="Saving Memory", detail="Learning from success..."
+            )
+        ))
+
+        # 添加任务
+        task = Task(title="Save Memory", description="Saving successful query pattern", status="in_progress")
+        await ui_queue.put(UiComponent(rich_component=TaskTrackerUpdateComponent.add_task(task)))
+
+        try:
+            # 执行保存
+            args_model = save_tool.get_args_schema()
+            tool_args = args_model(
+                question=message,
+                tool_name="run_sql",
+                args={"sql": generated_sql}
+            )
+            
+            result = await save_tool.execute(context, tool_args)
+            
+            await ui_queue.put(UiComponent(
+                rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="completed", detail="Pattern saved")
+            ))
+            
+            if result.ui_component:
+                await ui_queue.put(result.ui_component)
+                
+        except Exception as e:
+            logger.error(f"Memory save failed: {e}")
+            await ui_queue.put(UiComponent(
+                rich_component=TaskTrackerUpdateComponent.update_task(task.id, status="failed", detail=str(e))
+            ))
+
+        return {}
 
     async def _node_think(self, state: AgentState) -> PartialAgentState:
         """使用虚拟工具执行一次 LLM 请求。"""
@@ -756,8 +1027,11 @@ class GraphAgent:
         # 3. 合并工具清单
         available_tools = filtered_tools + virtual_tools
 
+        # Sanitize working messages as well
+        think_messages = self._sanitize_messages_for_llm(state["messages"])
+
         request = LlmRequest(
-            messages=state["messages"],
+            messages=think_messages,
             tools=available_tools,
             user=state["user"],
             temperature=self.config.temperature,
@@ -855,14 +1129,14 @@ class GraphAgent:
                 rich_component=TaskTrackerUpdateComponent.add_task(tool_task)
             ))
 
-            # 状态卡片 UI
-            card = StatusCardComponent(
-                title=f"Executing {tool_call.name}",
-                status="running",
-                icon="⚙️",
-                metadata=tool_call.arguments
-            )
-            await ui_queue.put(UiComponent(rich_component=card))
+            # # 状态卡片 UI
+            # card = StatusCardComponent(
+            #     title=f"Executing {tool_call.name}",
+            #     status="running",
+            #     icon="⚙️",
+            #     metadata=tool_call.arguments
+            # )
+            # await ui_queue.put(UiComponent(rich_component=card))
 
             # 钩子：工具执行前
             tool = await self.tool_registry.get_tool(tool_call.name)
@@ -913,11 +1187,24 @@ class GraphAgent:
 
         # 增量追加到 LlmMessages
         new_messages = state["messages"][:]
-        new_messages.append(LlmMessage(
-            role="assistant",
-            content=response.content or "",
-            tool_calls=response.tool_calls
-        ))
+        
+        # _node_think 已经将 assistant_msg 追加到了 state["messages"] 中
+        # 如果 state["messages"] 已经包含最新的 assistant 消息，则无需再次追加
+        # 简单判断：如果最后一条消息是 assistant 且 tool_calls 与当前 response 一致，则认为是同一条
+        should_append_assistant = True
+        if new_messages:
+            last_msg = new_messages[-1]
+            if (last_msg.role == "assistant" and 
+                last_msg.tool_calls == response.tool_calls):
+                should_append_assistant = False
+        
+        if should_append_assistant:
+            new_messages.append(LlmMessage(
+                role="assistant",
+                content=response.content or "",
+                tool_calls=response.tool_calls
+            ))
+            
         for res in tool_results_data:
             new_messages.append(LlmMessage(
                 role="tool",
@@ -938,18 +1225,8 @@ class GraphAgent:
         conversation = state["conversation"]
         ui_queue = state["ui_queue"]
 
-        # 若来源于 LLM 的 "done" 状态（无工具调用）
-        response = state.get("llm_response")
-        if response and not response.is_tool_call():
-            # 若尚未添加最终助手消息，则在此补充；
-            # （在 execute_tools 中已添加；若跳过工具调用则需在此添加）
-            conversation.add_message(Message(role="assistant", content=response.content))
-
-            if response.content:
-                await ui_queue.put(UiComponent(
-                    rich_component=RichTextComponent(content=response.content, markdown=True),
-                    simple_component=SimpleTextComponent(text=response.content)
-                ))
+        # _node_think 和其他节点已经负责了消息的添加和内容的 UI 推送
+        # 此处主要负责收尾工作（状态栏、输入框重置等）
 
         await ui_queue.put(UiComponent(
             rich_component=StatusBarUpdateComponent(
