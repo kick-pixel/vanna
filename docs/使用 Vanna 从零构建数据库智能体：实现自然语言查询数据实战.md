@@ -266,6 +266,17 @@ Vanna 本质是什么？ Vanna 其实是一个 **“带记忆的、数据库 AI 
 - **优势**：功能丰富、扩展性强
 - **应用场景**：数据分析、报表生成、监控告警
 
+### 1.5 小结
+
+本章介绍了 Vanna 的核心概念和架构思想，我们了解到：
+
+- **Vanna 的设计哲学**：通过图结构让数据库交互变得更智能、可控、可扩展
+- **五大核心能力**：状态持久化、人机协同、记忆管理、调试能力和工具集成
+- **与传统方式的区别**：从线性处理到图状流程，从静态到动态，从简单到复杂场景支持
+- **架构优势**：支持循环、条件分支、并行执行、错误恢复等复杂流程
+
+这些基础知识为我们深入理解 Vanna 的工作原理奠定了坚实基础。
+
 ## 第二章. Vanna 整体架构详解
 
 ### 2.1 Vanna 智能体架构图
@@ -449,10 +460,6 @@ GraphAgent 是 Vanna 的核心编排引擎，基于 LangGraph 实现，包含以
 - **完成节点 (finalize)**：收尾与保存
 
 ```mermaid
-config:
-  flowchart:
-    curve: linear
----
 graph TD;
         __start__([<p>__start__</p>]):::first
         initialize(initialize)
@@ -800,7 +807,7 @@ class SqlRunner(ABC):
        def __init__(self, host: str, user: str, password: str, database: str):
            # 初始化连接参数
            pass
-
+   
        async def run_sql(self, sql: str) -> Any:
            # 实现 MySQL 查询逻辑
            pass
@@ -852,7 +859,7 @@ class LlmService(ABC):
        def __init__(self, model: str, api_key: str, base_url: str = None):
            # 初始化 OpenAI 客户端
            pass
-
+   
        async def send_request(self, request: LlmRequest) -> LlmResponse:
            # 调用 OpenAI API
            pass
@@ -951,6 +958,18 @@ async def transform_args(
         args.sql += f" WHERE department_id = '{user.department_id}'"
     return args
 ```
+
+### 3.6 小结
+
+本章详细介绍了 Vanna 的核心模块设计，我们掌握了：
+
+- **ToolRegistry 系统**：统一的工具管理、权限控制、执行流程和审计功能
+- **数据库模块**：统一的 SqlRunner 接口、RunSqlTool 封装、多数据库支持
+- **LLM 服务模块**：统一接口、中间件支持、流式响应处理
+- **Integrations 设计**：插件化架构、统一接口、即插即用
+- **生命周期钩子**：在关键节点插入自定义逻辑的机制
+
+这些核心模块构成了 Vanna 的能力层，为构建强大的数据库 AI 应用提供了坚实基础。
 
 ## 第四章. 传统 Agent 设计和不足
 
@@ -1112,21 +1131,8 @@ async def _send_message(self, ...):
     return result_component
 
 # 传统Agent处理流程的具体例子
-"""
-用户输入："给我销售最高的前5个产品"
 
-传统Agent执行流程：
-1. 用户输入 → 调用LLM → LLM决定需要"获取表结构"
-2. 执行获取表结构工具 → 假设这个步骤失败了（网络问题、权限不足等）
-3. 传统方式：不会检查工具执行结果，直接继续下一步
-4. 生成SQL → 但因为没有表结构，SQL生成失败
-5. 无法回退到"重新获取表结构"，整个流程中断
 
-传统Agent无法处理的情况：
-- "如果获取表结构失败，重新尝试"
-- "如果SQL执行结果不符合预期，调整查询条件"
-- "如果权限不够，先申请权限再继续"
-"""
 ```
 
 **传统 Agent 的具体问题演示：**
@@ -1478,6 +1484,16 @@ GraphAgent：智能化管理状态，知道"活跃客户"是关键约束条件
 - **缺乏记忆**：无法复用历史成功模式
   - 传统方式：每次查询都是独立的，无法学习历史经验
   - GraphAgent：记忆系统保存成功模式，供后续查询复用
+
+### 4.3 小结
+
+本章通过对比分析传统 Agent 与 GraphAgent，我们深入理解了：
+
+- **传统 Agent 的实现方式**：线性处理，逻辑集中于单一方法
+- **传统 Agent 的局限性**：流程刚性、错误处理弱、扩展性差、状态管理混乱
+- **GraphAgent 的优势**：图结构、条件路由、状态管理、记忆闭环、错误恢复
+
+传统 Agent 就像固定的流水线，每样东西都按预定路径移动；GraphAgent 则像智能交通系统，能根据路况动态调整路线。这种架构差异让 GraphAgent 在处理复杂数据库查询时表现更加出色。
 
 ## 第五章. GraphAgent 设计和实现详解
 
@@ -2124,6 +2140,19 @@ def _sanitize_messages_for_llm(self, messages: List[LlmMessage]) -> List[LlmMess
 - 流程更加稳健，支持中断恢复
 - 提升系统可靠性
 
+### 5.7 小结
+
+本章深入探讨了 GraphAgent 的设计与实现，我们掌握了：
+
+- **GraphAgent 架构**：图驱动、节点分工、条件路由的工作方式
+- **核心节点详解**：各个节点的职责、输入输出和协作机制
+- **路由机制**：如何根据 LLM 响应动态调整流程走向
+- **虚拟工具系统**：强制 LLM 按预设流程工作的核心技术
+- **记忆系统**：AgentMemory 工具体系与实现详解
+- **历史净化机制**：确保消息协议兼容性的关键优化
+
+GraphAgent 通过图结构实现了智能化的数据库交互流程，相比传统 Agent，它更灵活、可扩展、健壮。这为构建复杂的企业级数据库 AI 应用提供了强大基础。
+
 ## 第六章. 完整示例：构建数据库 AI 助手
 
 ### 6.1 环境准备与依赖
@@ -2537,528 +2566,23 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## 第七章. Vanna 高级特性与扩展
+### 6.5 小结
 
-### 7.1 自定义工具开发
+本章通过完整的数据库 AI 助手构建示例，我们学会了：
 
-痛点：Vanna 默认功能不能满足特定业务需求？想添加自己的功能？
+- **环境准备**：依赖管理、配置设置、环境变量配置
+- **基础智能体构建**：LLM 服务、数据库配置、工具系统、记忆系统
+- **用户身份解析**：UserResolver 实现、权限控制机制
+- **消息处理**：流式响应、UI 组件、不同类型结果处理
+- **完整配置示例**：分模块组织代码、结构清晰、易于维护
 
-解决方案：继承 Tool 基类，实现 execute 方法，注册到系统中！
+通过实际构建示例，我们深入理解了 Vanna 各个组件的协作方式，掌握了从零开始构建数据库 AI 应用的完整流程。这些实践经验为我们在实际项目中应用 Vanna 奠定了坚实基础。
 
-Vanna 支持开发自定义工具扩展功能：
 
-```python
-from vanna.core.tool.base import Tool
-from pydantic import BaseModel
-from typing import Optional
 
-# 1. 定义工具参数模型（使用 Pydantic 确保类型安全）
-class CustomAnalysisToolArgs(BaseModel):
-    """
-    自定义分析工具的参数模型
-    所有参数都会被自动验证和类型转换
-    """
-    metric: str  # 要分析的指标，如 "revenue", "users", "conversion_rate"
-    time_range: str  # 时间范围，如 "last_month", "last_quarter", "YTD"
-    department: Optional[str] = None  # 可选部门过滤
-    region: Optional[str] = None  # 可选地区过滤
+## 第七章. Vanna 最佳实践与 Integration 选型
 
-# 2. 创建自定义工具类
-class CustomAnalysisTool(Tool[CustomAnalysisToolArgs]):
-    """自定义业务分析工具"""
-
-    @property
-    def name(self) -> str:
-        """工具的唯一标识符"""
-        return "analyze_custom_metrics"
-
-    @property
-    def description(self) -> str:
-        """工具描述，会显示给 LLM，帮助其理解工具用途"""
-        return "Analyze custom business metrics with optional department and region filters"
-
-    def get_args_schema(self) -> type[CustomAnalysisToolArgs]:
-        """返回参数模型类"""
-        return CustomAnalysisToolArgs
-
-    async def execute(self, context: ToolContext, args: CustomAnalysisToolArgs) -> ToolResult:
-        """
-        工具执行逻辑
-        :param context: 工具执行上下文，包含用户、会话等信息
-        :param args: 解析后的工具参数
-        :return: 工具执行结果
-        """
-        try:
-            # 1. 实现业务逻辑
-            result = await self._perform_analysis(args, context.user)
-
-            # 2. 准备返回结果
-            result_text = f"""Analysis for {args.metric} in {args.time_range}:
-- Value: {result['value']}
-- Change: {result['change']}%
-- Trend: {result['trend']}
-- Confidence: {result['confidence']:.2f}"""
-
-            # 3. 返回成功结果
-            return ToolResult(
-                success=True,
-                result_for_llm=result_text,  # LLM 可以理解的结果文本
-                ui_component=await self._create_visualization(context, result),  # 可选的 UI 组件
-                metadata={'execution_time': result['execution_time']}  # 可选的元数据
-            )
-
-        except Exception as e:
-            # 4. 错误处理
-            return ToolResult(
-                success=False,
-                result_for_llm=f"Analysis failed: {str(e)}",
-                error=str(e)
-            )
-
-    async def _perform_analysis(self, args: CustomAnalysisToolArgs, user: User) -> dict:
-        """执行具体分析逻辑"""
-        # 这里实现您的业务分析逻辑
-        # 例如：构建并执行 SQL 查询、调用外部 API、进行数据计算等
-        import random
-        import time
-
-        start_time = time.time()
-
-        # 模拟分析过程
-        value = random.uniform(1000, 10000)
-        change = random.uniform(-10, 20)
-        trend = "increasing" if change > 0 else "decreasing"
-        confidence = random.uniform(0.7, 0.95)
-
-        execution_time = time.time() - start_time
-
-        return {
-            'value': round(value, 2),
-            'change': round(change, 2),
-            'trend': trend,
-            'confidence': confidence,
-            'execution_time': execution_time
-        }
-
-    async def _create_visualization(self, context: ToolContext, result: dict):
-        """创建可视化组件（可选）"""
-        # 这里可以创建图表、表格等可视化组件
-        # 例如：使用 Plotly 创建图表，或返回表格数据
-        pass
-
-# 3. 注册自定义工具
-async def setup_custom_tools(tool_registry: ToolRegistry):
-    """设置自定义工具"""
-    custom_tool = CustomAnalysisTool()
-
-    # 注册工具并设置访问权限
-    tool_registry.register_local_tool(
-        custom_tool,
-        access_groups=['admin', 'manager']  # 只有管理员和经理可以使用
-    )
-
-    print(f"✓ 自定义工具 '{custom_tool.name}' 已注册")
-    print(f"  描述: {custom_tool.description}")
-    print(f"  参数: {custom_tool.get_args_schema().__fields__.keys()}")
-
-# 使用示例
-"""
-# 在您的应用初始化代码中：
-tool_registry = ToolRegistry()
-await setup_custom_tools(tool_registry)
-
-# 现在 LLM 可以使用 analyze_custom_metrics 工具了！
-"""
-```
-
-**自定义工具开发最佳实践：**
-
-1. **参数验证**：使用 Pydantic 模型进行严格的参数验证
-2. **类型安全**：使用泛型确保工具类型安全
-3. **错误处理**：妥善处理异常情况
-4. **权限控制**：设置合适的访问权限
-5. **文档说明**：提供清晰的工具描述
-6. **性能考虑**：考虑工具执行的性能影响
-
-### 7.2 权限控制与行级安全
-
-痛点：不同用户需要不同权限？如何实现数据隔离？如何防止用户访问未授权数据？
-
-解决方案：ToolRegistry 内置权限控制，transform_args 实现行级安全！
-
-Vanna 提供细粒度的权限控制机制：
-
-```python
-# 1. 工具级权限控制
-tool_registry.register_local_tool(sql_tool, access_groups=['admin', 'manager'])  # 管理员和经理可以使用
-tool_registry.register_local_tool(viz_tool, access_groups=['admin', 'manager', 'analyst'])  # 分析师也可以使用
-tool_registry.register_local_tool(data_export_tool, access_groups=['admin'])  # 只有管理员可以导出数据
-
-# 2. 参数级转换（实现行级安全）- 高级权限控制
-async def transform_args(
-    self,
-    tool: Tool[T],
-    args: T,
-    user: User,
-    context: ToolContext,
-) -> Union[T, ToolRejection]:
-    """
-    参数转换函数 - 实现行级安全控制
-    在工具执行前修改参数，限制用户可以访问的数据
-    """
-    # 检查是否为 SQL 工具，需要进行数据访问限制
-    if isinstance(tool, RunSqlTool) and hasattr(args, 'sql'):
-        # 根据用户组和身份修改 SQL 查询
-        if user.group == 'sales':
-            # 销售人员：只能查看自己的销售数据
-            args.sql = f"{args.sql} AND sales_rep_id = '{user.id}'"
-        elif user.group == 'regional_manager':
-            # 区域经理：只能查看自己管辖区域的数据
-            region = await self._get_user_region(user.id)
-            args.sql = f"{args.sql} AND region_id = '{region}'"
-        elif user.group == 'department_manager':
-            # 部门经理：只能查看自己部门的数据
-            department = user.metadata.get('department')
-            args.sql = f"{args.sql} AND department_id = '{department}'"
-        elif user.group == 'auditor':
-            # 审计员：只能查看特定时间段的汇总数据
-            args.sql = self._restrict_for_auditor(args.sql)
-        elif user.group == 'guest':
-            # 访客：严格限制，只能查看非敏感的汇总数据
-            args.sql = self._restrict_for_guest(args.sql)
-
-    elif isinstance(tool, DataExportTool):
-        # 数据导出工具的特殊权限控制
-        if user.group not in ['admin', 'manager']:
-            # 非管理员和经理不能导出数据
-            return ToolRejection(
-                reason="Data export requires admin or manager privileges",
-                error_code="INSUFFICIENT_PRIVILEGES"
-            )
-
-    return args  # 返回修改后的参数
-
-async def _get_user_region(self, user_id: str) -> str:
-    """获取用户管辖区域 - 示例实现"""
-    # 从数据库或缓存中查询用户管辖区域
-    # 这里是示例，实际实现可能需要查询用户表
-    region_mapping = {
-        'john_sales': 'north',
-        'jane_sales': 'south',
-        'bob_sales': 'east'
-    }
-    return region_mapping.get(user_id, 'unknown')
-
-def _restrict_for_auditor(self, sql: str) -> str:
-    """为审计员限制 SQL - 示例实现"""
-    # 审计员只能查看汇总数据，不能查看个人详细信息
-    restricted_fields = ['ssn', 'credit_card', 'password', 'personal_info']
-    for field in restricted_fields:
-        sql = sql.replace(field, f"MASKED({field})")
-    return sql
-
-def _restrict_for_guest(self, sql: str) -> str:
-    """为访客限制 SQL - 示例实现"""
-    # 访客只能查看汇总数据，不能查看详细记录
-    if 'WHERE' not in sql.upper():
-        sql += " WHERE 1=1"
-    sql += " AND is_public = true"  # 只返回公开数据
-    return sql
-
-# 3. 动态权限检查
-class DynamicPermissionChecker:
-    """动态权限检查器 - 根据业务规则动态决定权限"""
-
-    async def check_permission(
-        self,
-        user: User,
-        tool_name: str,
-        operation: str,
-        resource: str
-    ) -> bool:
-        """
-        动态权限检查
-        :param user: 用户对象
-        :param tool_name: 工具名称
-        :param operation: 操作类型 (read/write/delete)
-        :param resource: 资源标识
-        :return: 是否有权限
-        """
-        # 示例：基于用户业务角色的动态权限检查
-        business_role = await self._get_business_role(user.id)
-
-        # 检查业务角色权限
-        if business_role == 'financial_analyst':
-            if operation == 'read' and resource.startswith('finance_'):
-                return True
-            elif operation == 'read' and resource == 'sales_data':
-                # 财务分析师可以查看销售数据
-                return True
-
-        elif business_role == 'product_manager':
-            if operation == 'read' and resource.startswith('product_'):
-                return True
-            elif operation == 'read' and resource.startswith('user_'):
-                # 产品经理可以查看用户数据
-                return True
-
-        return False
-
-    async def _get_business_role(self, user_id: str) -> str:
-        """获取用户业务角色 - 示例实现"""
-        # 实际实现可能需要查询用户表或其他业务系统
-        role_mapping = {
-            'jane': 'financial_analyst',
-            'john': 'product_manager',
-            'bob': 'sales_manager'
-        }
-        return role_mapping.get(user_id, 'general_user')
-
-# 4. 权限配置示例
-"""
-权限配置策略：
-
-1. 分层权限控制：
-   - 工具层：控制用户可以使用哪些工具
-   - 数据层：控制用户可以访问哪些数据
-   - 字段层：控制用户可以查看哪些字段
-
-2. 基于属性的访问控制 (ABAC)：
-   - 基于用户属性（部门、角色、级别）
-   - 基于资源属性（敏感度、分类）
-   - 基于环境属性（时间、地点、风险）
-
-3. 最小权限原则：
-   - 用户只能访问完成工作所需的最小数据集
-   - 定期审查和调整权限设置
-   - 记录所有权限变更和访问日志
-"""
-```
-
-### 7.3 记忆与上下文管理
-
-痛点：会话状态怎么保留？历史查询怎么复用？如何实现个性化的查询体验？
-
-解决方案：AgentMemory 提供持久化记忆，工具系统自动管理上下文！
-
-Vanna 的记忆系统可以保存和检索历史交互：
-
-```python
-from vanna.integrations.local.agent_memory import DemoAgentMemory
-from vanna.core.llm import LlmService
-import json
-from datetime import datetime
-
-# 1. 配置记忆系统
-agent_memory = DemoAgentMemory(max_items=1000)  # 配置最大记忆项目数
-
-# 2. 在工具中使用记忆
-class SaveQuestionToolArgsTool(Tool):
-    """保存问题和工具调用的工具"""
-
-    @property
-    def name(self) -> str:
-        return "save_question_tool_args"
-
-    @property
-    def description(self) -> str:
-        return "Save a successful question-tool-args combination for future reference"
-
-    def get_args_schema(self):
-        from pydantic import BaseModel
-
-        class SaveArgs(BaseModel):
-            question: str  # 用户提出的问题
-            tool_name: str  # 使用的工具名称
-            args: dict  # 工具参数
-            result_summary: str  # 结果摘要
-            tags: list = []  # 可选标签，便于分类检索
-
-        return SaveArgs
-
-    async def execute(self, context: ToolContext, args) -> ToolResult:
-        """保存成功的查询模式到记忆库"""
-        try:
-            # 1. 构建记忆数据
-            memory_data = {
-                'question': args.question,
-                'tool_name': args.tool_name,
-                'args': args.args,
-                'result_summary': args.result_summary,
-                'timestamp': datetime.now().isoformat(),
-                'user_id': context.user.id,
-                'conversation_id': context.conversation_id,
-                'tags': args.tags or []
-            }
-
-            # 2. 保存到记忆系统
-            await context.agent_memory.save_tool_usage(
-                question=args.question,
-                tool_name=args.tool_name,
-                arguments=args.args,
-                result=args.result_summary,
-                user_id=context.user.id,
-                metadata=memory_data  # 保存完整的记忆数据
-            )
-
-            return ToolResult(
-                success=True,
-                result_for_llm=f"Successfully saved query pattern for question: '{args.question[:50]}...'",
-                metadata={'saved_at': memory_data['timestamp']}
-            )
-
-        except Exception as e:
-            return ToolResult(
-                success=False,
-                result_for_llm=f"Failed to save query pattern: {str(e)}",
-                error=str(e)
-            )
-
-# 3. 检索历史记忆的工具
-class SearchSavedCorrectToolUsesTool(Tool):
-    """搜索历史成功工具调用的工具"""
-
-    @property
-    def name(self) -> str:
-        return "search_saved_correct_tool_uses"
-
-    @property
-    def description(self) -> str:
-        return "Search for previously successful tool uses related to a question"
-
-    def get_args_schema(self):
-        from pydantic import BaseModel
-
-        class SearchArgs(BaseModel):
-            question: str  # 要搜索的问题
-            tool_name_filter: str = None  # 可选：特定工具过滤
-            tags: list = []  # 可选：标签过滤
-            limit: int = 5  # 可选：返回结果数量
-            similarity_threshold: float = 0.7  # 可选：相似度阈值
-
-        return SearchArgs
-
-    async def execute(self, context: ToolContext, args) -> ToolResult:
-        """搜索历史成功的工具调用"""
-        try:
-            # 1. 搜索相似的历史查询
-            results = await context.agent_memory.search_similar_usage(
-                query=args.question,
-                tool_name_filter=args.tool_name_filter,
-                limit=args.limit,
-                similarity_threshold=args.similarity_threshold
-            )
-
-            if not results:
-                return ToolResult(
-                    success=True,
-                    result_for_llm="No similar queries found in memory."
-                )
-
-            # 2. 格式化搜索结果
-            formatted_results = []
-            for result in results:
-                formatted_result = f"""
-Question: {result.get('question', 'N/A')}
-Tool: {result.get('tool_name', 'N/A')}({json.dumps(result.get('arguments', {}))})
-Result: {result.get('result', 'N/A')[:200]}...
-Timestamp: {result.get('timestamp', 'N/A')}
-"""
-                formatted_results.append(formatted_result)
-
-            search_result_text = f"Found {len(formatted_results)} similar queries:\n" + "\n".join(formatted_results)
-
-            return ToolResult(
-                success=True,
-                result_for_llm=search_result_text,
-                metadata={'result_count': len(results)}
-            )
-
-        except Exception as e:
-            return ToolResult(
-                success=False,
-                result_for_llm=f"Search failed: {str(e)}",
-                error=str(e)
-            )
-
-# 4. 记忆管理最佳实践
-class MemoryManager:
-    """记忆管理器 - 封装记忆操作的高级功能"""
-
-    def __init__(self, agent_memory):
-        self.agent_memory = agent_memory
-
-    async def save_successful_query(
-        self,
-        question: str,
-        sql: str,
-        result: str,
-        user_id: str,
-        metadata: dict = None
-    ):
-        """保存成功的查询"""
-        memory_item = {
-            'type': 'sql_query',
-            'question': question,
-            'sql': sql,
-            'result_summary': result[:500],  # 只保存结果摘要
-            'user_id': user_id,
-            'timestamp': datetime.now().isoformat(),
-            'success': True,
-            **(metadata or {})
-        }
-
-        await self.agent_memory.save_tool_usage(
-            question=question,
-            tool_name='run_sql',
-            arguments={'sql': sql},
-            result=result[:500],
-            user_id=user_id,
-            metadata=memory_item
-        )
-
-    async def get_user_query_history(self, user_id: str, limit: int = 10):
-        """获取用户查询历史"""
-        # 这里需要实现基于用户的记忆检索
-        # 可能需要在 AgentMemory 接口中添加新方法
-        pass
-
-    async def cleanup_old_memories(self, days_old: int = 30):
-        """清理过期记忆"""
-        # 这里实现记忆清理逻辑
-        pass
-
-# 5. 上下文管理示例
-"""
-在实际应用中，您可以：
-
-1. 会话上下文管理：
-   - 保持会话状态，支持多轮对话
-   - 跟踪查询进度和中间结果
-   - 管理用户偏好和习惯
-
-2. 领域知识管理：
-   - 保存业务规则和约束
-   - 记录数据字典和字段含义
-   - 存储常用的查询模式
-
-3. 个性化体验：
-   - 根据用户历史提供个性化建议
-   - 学习用户偏好，优化查询结果
-   - 提供符合用户习惯的交互方式
-"""
-```
-
-**记忆系统的优势：**
-
-1. **查询复用**：避免重复执行相似查询
-2. **知识积累**：积累业务知识和数据理解
-3. **性能优化**：缓存结果，提升响应速度
-4. **个性化**：提供符合用户习惯的体验
-
-## 第八章. Vanna 最佳实践与 Integration 选型
-
-### 8.1 性能优化
+### 7.1 性能优化
 
 痛点：响应慢、查询效率低？用户体验差？
 
@@ -3069,7 +2593,7 @@ class MemoryManager:
 - **异步处理**：充分利用异步 IO 提升并发处理能力
 - **SQL 优化**：在生成 SQL 时考虑性能因素
 
-### 8.2 安全考虑
+### 7.2 安全考虑
 
 痛点：SQL 注入、权限泄露？安全风险高？
 
@@ -3080,7 +2604,7 @@ class MemoryManager:
 - **数据脱敏**：对敏感数据进行脱敏处理
 - **审计日志**：记录所有操作用于安全审计
 
-### 8.3 监控与可观测性
+### 7.3 监控与可观测性
 
 痛点：出了问题怎么排查？系统状态怎么监控？
 
@@ -3103,7 +2627,7 @@ agent = GraphAgent(
 )
 ```
 
-### 8.4 LLM 提供方选型
+### 7.4 LLM 提供方选型
 
 Vanna 支持多种 LLM 提供方：
 
@@ -3118,7 +2642,7 @@ Vanna 支持多种 LLM 提供方：
 - 需要函数调用与长上下文 → `openai/azureopenai`
 - 本地推理与隐私 → `ollama`
 
-### 8.5 AgentMemory 存储后端选型
+### 7.5 AgentMemory 存储后端选型
 
 - 本地内存：`local/agent_memory/in_memory`（开发/演示）
 - 生产化向量库：`pinecone`、`chromadb`、`faiss`、`qdrant`、`weaviate`、`milvus`、`opensearch`、`marqo`、`azuresearch`
@@ -3126,7 +2650,7 @@ Vanna 支持多种 LLM 提供方：
   - 云托管与水平扩展 → `pinecone`、`azuresearch`
   - 自建与成本控制 → `qdrant`、`weaviate`、`chromadb`
 
-### 8.6 数据库支持
+### 7.6 数据库支持
 
 支持多种数据库：
 
@@ -3140,8 +2664,6 @@ Vanna 支持多种 LLM 提供方：
 - 自动落盘查询结果文件，便于可视化工具使用
 
 ## 总结
-
-Vanna 把复杂的数据库查询变成简单的自然语言对话！
 
 Vanna 通过智能体架构，实现了从自然语言到 SQL 的无缝转换。其核心优势在于：
 
